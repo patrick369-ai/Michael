@@ -21,3 +21,5 @@ knowledge/build/output/
 
 # 系统
 .DS_Store
+pdf_images/
+pdf_pages/
