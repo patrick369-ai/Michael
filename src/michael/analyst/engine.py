@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import Optional
 
 from michael.config import Config, ReportType, REPORT_STEP_MAP, StepName
 from michael.types import (
     AnalysisResult, DataManifest, GateStatus, StepResult,
 )
+from michael.analyst.claude_cli import ClaudeCLI
+from michael.analyst.prompt_builder import PromptBuilder, make_manifest_summary
+from michael.calculator import process_manifest, CalculatedContext
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +39,33 @@ class AnalystEngine:
     - 步骤不可跳过、不可重排
     - 门控状态为 FAIL/NO_TRADE 时立即终止
     - 输出必须符合预定义的 JSON Schema
+
+    数据流：
+        DataManifest → Calculator → CalculatedContext
+                                   ↓
+        PromptBuilder（注入 Calc 输出 + Skills + 历史引用）
+                                   ↓
+        ClaudeCLI（调用 + JSON 提取 + Schema 验证）
+                                   ↓
+        AnalysisResult（每个 Skill 的输出 + 总门控）
     """
 
-    def __init__(self, config: Config, claude_cli: ClaudeCLI, prompt_builder: PromptBuilder):
+    def __init__(
+        self,
+        config: Config,
+        claude_cli: Optional[ClaudeCLI] = None,
+        prompt_builder: Optional[PromptBuilder] = None,
+    ):
         self._config = config
-        self._claude = claude_cli
-        self._prompt = prompt_builder
+        self._claude = claude_cli or ClaudeCLI(config)
+        self._prompt = prompt_builder or PromptBuilder(config)
 
     def run(
         self,
         report_type: ReportType,
         manifest: DataManifest,
-        previous_results: dict[str, dict] | None = None,
+        previous_results: Optional[dict] = None,
+        audit_feedback: Optional[list] = None,
     ) -> AnalysisResult:
         """执行分析工作流
 
@@ -55,30 +73,44 @@ class AnalystEngine:
             report_type: 报告类型
             manifest: 数据采集结果
             previous_results: 前序报告结果（如 weekly 结果用于 daily）
+            audit_feedback: 最近的审计教训
 
         Returns:
-            AnalysisResult 包含所有步骤结果和最终门控状态
+            AnalysisResult 包含 Calculator 输出、所有步骤结果、最终门控状态
         """
+        # Audit 报告独立处理（不调用 Claude）
         if report_type in AUDIT_REPORTS:
             return AnalysisResult(
                 report_type=report_type.value,
                 final_gate=GateStatus.PASS,
             )
 
-        steps = REPORT_STEP_MAP.get(report_type, [])
-        if not steps:
-            logger.warning(f"报告类型 {report_type.value} 无定义步骤")
-            return AnalysisResult(
-                report_type=report_type.value,
-                final_gate=GateStatus.FAIL,
-            )
+        # Step 1: Calculator 预处理
+        logger.info(f"[Calculator] 处理 manifest")
+        calc_ctx = process_manifest(
+            manifest,
+            primary_symbol=self._config.primary_symbol,
+        )
+        logger.info(f"[Calculator] 完成: PDH={calc_ctx.pdh}, PDL={calc_ctx.pdl}, "
+                    f"FVGs={sum(len(v) for v in calc_ctx.fvgs_by_tf.values())}")
 
+        # Step 2: Skill 步骤
+        steps = REPORT_STEP_MAP.get(report_type, [])
         result = AnalysisResult(report_type=report_type.value)
 
         if report_type in SIGNAL_REPORTS:
-            self._run_two_stage(report_type, steps, manifest, previous_results, result)
+            self._run_two_stage(
+                report_type, steps, manifest, calc_ctx,
+                previous_results, audit_feedback, result,
+            )
+        elif steps:
+            self._run_merged(
+                report_type, steps, manifest, calc_ctx,
+                previous_results, audit_feedback, result,
+            )
         else:
-            self._run_merged(report_type, steps, manifest, previous_results, result)
+            logger.warning(f"报告类型 {report_type.value} 无定义步骤")
+            result.final_gate = GateStatus.FAIL
 
         return result
 
@@ -87,23 +119,23 @@ class AnalystEngine:
         report_type: ReportType,
         steps: list[StepName],
         manifest: DataManifest,
-        previous_results: dict[str, dict] | None,
+        calc_ctx: CalculatedContext,
+        previous_results: Optional[dict],
+        audit_feedback: Optional[list],
         result: AnalysisResult,
     ) -> None:
-        """合并模式 — 所有步骤在一次 Claude 调用中完成
-
-        prompt 仍然有步骤结构（Step 1, Step 2, ...），
-        但只产生一次调用。输出 JSON 包含各步骤的字段。
-        """
+        """合并模式 — 所有步骤在一次 Claude 调用中完成"""
         logger.info(f"[合并模式] {report_type.value}: {len(steps)} 步")
 
         prompt = self._prompt.build_merged(
             report_type=report_type,
             steps=steps,
-            manifest=manifest,
+            manifest_summary=make_manifest_summary(manifest),
+            calculated_context=calc_ctx.to_prompt_dict(),
             previous_results=previous_results,
+            audit_feedback=audit_feedback,
         )
-        schema = self._prompt.get_merged_schema(report_type, steps)
+        schema = self._prompt.get_merged_schema(report_type)
 
         start = _now_ts()
         raw_text, output = self._claude.call(
@@ -114,21 +146,22 @@ class AnalystEngine:
         )
         duration = _now_ts() - start
 
-        # 解析门控状态
         gate = _parse_gate(output.get("gate_status", "PASS"))
 
-        # 为每个步骤创建 StepResult（从合并输出中提取）
-        for step in steps:
-            step_key = step.value
-            step_output = output.get(step_key, {})
+        # 为每个 Skill 创建 StepResult
+        from michael.analyst.prompt_builder import REPORT_SKILLS
+        skill_keys = [s.split("/")[-1] for s in REPORT_SKILLS.get(report_type, [])]
+
+        for skill_key in skill_keys:
+            step_output = output.get(skill_key, {})
             step_result = StepResult(
-                step_name=step_key,
+                step_name=skill_key,
                 report_type=report_type.value,
                 gate_status=gate,
                 output=step_output,
                 raw_text=raw_text,
-                duration_seconds=duration / len(steps),
-                token_count=len(prompt) // 4,  # 粗估
+                duration_seconds=duration / max(len(skill_keys), 1),
+                token_count=len(prompt) // 4,
             )
             result.steps.append(step_result)
 
@@ -140,30 +173,29 @@ class AnalystEngine:
         report_type: ReportType,
         steps: list[StepName],
         manifest: DataManifest,
-        previous_results: dict[str, dict] | None,
+        calc_ctx: CalculatedContext,
+        previous_results: Optional[dict],
+        audit_feedback: Optional[list],
         result: AnalysisResult,
     ) -> None:
-        """两阶段模式 — 先分析判断方向，再精确执行
+        """两阶段模式 — 信号报告
 
-        Stage 1: 方向分析（合并 weekly context + daily bias + session）
-        Stage 2: 执行信号（LTF execution + signal output）
-
-        Stage 1 门控失败 → 不进入 Stage 2（代码级检查）
+        Stage 1: 方向分析（合并 framing + profiling + targeting）
+        Stage 2: 执行计划（market_state + entry_model_matching + trade_plan）
+        Stage 1 门控失败 → 不进入 Stage 2
         """
-        # 分离步骤
-        analysis_steps = [s for s in steps if s not in (StepName.LTF_EXECUTION, StepName.SIGNAL_OUTPUT)]
-        execution_steps = [s for s in steps if s in (StepName.LTF_EXECUTION, StepName.SIGNAL_OUTPUT)]
-
-        # Stage 1: 分析阶段
-        logger.info(f"[两阶段] Stage 1: {report_type.value}, {len(analysis_steps)} 步")
+        # Stage 1
+        logger.info(f"[两阶段] Stage 1: {report_type.value}")
 
         s1_prompt = self._prompt.build_merged(
             report_type=report_type,
-            steps=analysis_steps,
-            manifest=manifest,
+            steps=steps,
+            manifest_summary=make_manifest_summary(manifest),
+            calculated_context=calc_ctx.to_prompt_dict(),
             previous_results=previous_results,
+            audit_feedback=audit_feedback,
         )
-        s1_schema = self._prompt.get_merged_schema(report_type, analysis_steps)
+        s1_schema = self._prompt.get_merged_schema(report_type)
 
         start = _now_ts()
         s1_raw, s1_output = self._claude.call(
@@ -176,36 +208,45 @@ class AnalystEngine:
 
         s1_gate = _parse_gate(s1_output.get("gate_status", "PASS"))
 
-        for step in analysis_steps:
+        # 为 Stage 1 的 Skill 创建结果
+        from michael.analyst.prompt_builder import REPORT_SKILLS, STAGE2_SKILLS
+        s1_skill_keys = [s.split("/")[-1] for s in REPORT_SKILLS.get(report_type, [])]
+        for skill_key in s1_skill_keys:
             result.steps.append(StepResult(
-                step_name=step.value,
+                step_name=skill_key,
                 report_type=report_type.value,
                 gate_status=s1_gate,
-                output=s1_output.get(step.value, {}),
+                output=s1_output.get(skill_key, {}),
                 raw_text=s1_raw,
-                duration_seconds=s1_duration / len(analysis_steps),
+                duration_seconds=s1_duration / max(len(s1_skill_keys), 1),
             ))
 
-        # 代码级门控检查
+        # 门控检查：Stage 1 失败则停止
         if s1_gate in (GateStatus.FAIL, GateStatus.NO_TRADE):
             result.final_gate = s1_gate
             logger.info(f"[两阶段] Stage 1 门控: {s1_gate.value}，跳过 Stage 2")
             return
 
-        # Stage 2: 执行阶段
-        if not execution_steps:
-            result.final_gate = s1_gate
-            return
-
-        logger.info(f"[两阶段] Stage 2: {len(execution_steps)} 步")
+        # Stage 2
+        logger.info(f"[两阶段] Stage 2: 执行计划")
 
         s2_prompt = self._prompt.build_execution(
             report_type=report_type,
-            steps=execution_steps,
-            manifest=manifest,
+            manifest_summary=make_manifest_summary(manifest),
             stage1_result=s1_output,
+            calculated_context=calc_ctx.to_prompt_dict(),
         )
-        s2_schema = self._prompt.get_merged_schema(report_type, execution_steps)
+        # Stage 2 的 Schema 不同，构造一个简化的
+        s2_schema = {
+            "type": "object",
+            "required": ["trade_plan", "gate_status"],
+            "properties": {
+                "market_state": {"type": "object"},
+                "entry_model_matching": {"type": "object"},
+                "trade_plan": {"type": "object"},
+                "gate_status": {"type": "string"},
+            },
+        }
 
         start = _now_ts()
         s2_raw, s2_output = self._claude.call(
@@ -218,81 +259,19 @@ class AnalystEngine:
 
         s2_gate = _parse_gate(s2_output.get("gate_status", "PASS"))
 
-        for step in execution_steps:
+        s2_skill_keys = [s.split("/")[-1] for s in STAGE2_SKILLS] + ["trade_plan"]
+        for skill_key in s2_skill_keys:
             result.steps.append(StepResult(
-                step_name=step.value,
+                step_name=skill_key,
                 report_type=report_type.value,
                 gate_status=s2_gate,
-                output=s2_output.get(step.value, {}),
+                output=s2_output.get(skill_key, {}),
                 raw_text=s2_raw,
-                duration_seconds=s2_duration / len(execution_steps),
+                duration_seconds=s2_duration / max(len(s2_skill_keys), 1),
             ))
 
         result.final_gate = s2_gate
         logger.info(f"[两阶段] 完成: gate={s2_gate.value}, 总耗时={s1_duration + s2_duration:.1f}s")
-
-
-class ClaudeCLI:
-    """Claude CLI 包装器 — 占位，待实现"""
-
-    def __init__(self, config: Config):
-        self._config = config
-
-    def call(
-        self,
-        prompt: str,
-        schema: dict | None = None,
-        timeout: int = 600,
-        max_turns: int = 5,
-    ) -> tuple[str, dict]:
-        """调用 Claude CLI，返回 (raw_text, parsed_json)
-
-        TODO: 实现 subprocess 调用 + JSON 提取 + Schema 验证 + 失败重试
-        """
-        raise NotImplementedError("ClaudeCLI.call 待实现")
-
-
-class PromptBuilder:
-    """Prompt 构建器 — 占位，待实现
-
-    核心职责：
-    1. 根据报告类型和步骤，从 Playbook/SOP 加载约束指令
-    2. 从 KnowledgeBrain 按类别过滤知识上下文
-    3. 组装数据引用、历史结果、反馈教训
-    4. 控制 token 预算
-    5. 附加输出 JSON Schema
-    """
-
-    def __init__(self, config: Config):
-        self._config = config
-
-    def build_merged(
-        self,
-        report_type: ReportType,
-        steps: list[StepName],
-        manifest: DataManifest,
-        previous_results: dict[str, dict] | None = None,
-    ) -> str:
-        """构建合并模式的 prompt"""
-        raise NotImplementedError("PromptBuilder.build_merged 待实现")
-
-    def build_execution(
-        self,
-        report_type: ReportType,
-        steps: list[StepName],
-        manifest: DataManifest,
-        stage1_result: dict,
-    ) -> str:
-        """构建执行阶段的 prompt（Stage 2）"""
-        raise NotImplementedError("PromptBuilder.build_execution 待实现")
-
-    def get_merged_schema(
-        self,
-        report_type: ReportType,
-        steps: list[StepName],
-    ) -> dict:
-        """获取合并模式的输出 JSON Schema"""
-        raise NotImplementedError("PromptBuilder.get_merged_schema 待实现")
 
 
 def _parse_gate(value: str) -> GateStatus:
