@@ -36,8 +36,14 @@ from michael.calculator.fibonacci import (
 from michael.calculator.session_ranges import (
     calc_session_range,
 )
+from michael.calculator.manifest_processor import (
+    CalculatedContext,
+    process_manifest,
+)
 
 __all__ = [
+    "CalculatedContext",
+    "process_manifest",
     "calc_pdh_pdl",
     "calc_pwh_pwl",
     "calc_equilibrium",
