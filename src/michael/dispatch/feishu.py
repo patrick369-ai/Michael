@@ -306,21 +306,30 @@ class FeishuPublisher:
         self._http_post(self.SEND_MESSAGE_URL, body, token)
 
     def _get_access_token(self) -> str:
-        """获取 tenant_access_token"""
+        """获取 tenant_access_token
+
+        token 在响应顶层（不在 data 字段内）：
+        {"code":0, "expire":..., "msg":"ok", "tenant_access_token":"t-xxx"}
+        """
         if self._cached_token:
             return self._cached_token
 
         body = {"app_id": self._app_id, "app_secret": self._app_secret}
-        response = self._http_post(self.TOKEN_URL, body)
+        response = self._http_post_raw(self.TOKEN_URL, body)
         token = response.get("tenant_access_token")
         if not token:
             raise FeishuAPIError(f"无法获取 access_token: {response}")
         self._cached_token = token
         return token
 
+    def _http_post(self, url: str, body: dict, token: Optional[str] = None) -> dict:
+        """发送 POST 请求，返回 data 字段（业务数据）"""
+        full = self._http_post_raw(url, body, token)
+        return full.get("data", {})
+
     @staticmethod
-    def _http_post(url: str, body: dict, token: Optional[str] = None) -> dict:
-        """发送 POST 请求"""
+    def _http_post_raw(url: str, body: dict, token: Optional[str] = None) -> dict:
+        """发送 POST 请求，返回完整 JSON 响应"""
         headers = {"Content-Type": "application/json; charset=utf-8"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -334,6 +343,6 @@ class FeishuPublisher:
                 resp_data = json.loads(resp_text)
                 if resp_data.get("code", 0) != 0:
                     raise FeishuAPIError(f"飞书 API 错误: {resp_data}")
-                return resp_data.get("data", {})
+                return resp_data
         except urllib.error.URLError as e:
             raise FeishuAPIError(f"HTTP 错误: {e}") from e
