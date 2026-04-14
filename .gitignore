@@ -1,0 +1,23 @@
+# 环境与密钥
+.env
+*.db
+
+# 数据文件
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 知识构建中间产物
+knowledge/build/output/
+
+# IDE
+.vscode/
+.idea/
+
+# 系统
+.DS_Store

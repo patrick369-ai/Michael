@@ -1,0 +1,150 @@
+{
+  "project": "Michael",
+  "updated": "2026-04-14",
+  "features": [
+    {
+      "id": "F-001",
+      "area": "ingestion",
+      "title": "TradingView MCP 数据采集",
+      "description": "直接 JSON-RPC 调用 TradingView MCP，采集多品种多时间框架 OHLCV 数据",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_ingestion.py -v",
+      "priority": 1
+    },
+    {
+      "id": "F-002",
+      "area": "ingestion",
+      "title": "DataManifest 完整性跟踪",
+      "description": "采集结果结构化描述：文件路径、bar 数量、PASS/PARTIAL/FAIL 状态",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_ingestion.py::test_manifest -v",
+      "priority": 1
+    },
+    {
+      "id": "F-003",
+      "area": "ingestion",
+      "title": "MarketStore 持久化",
+      "description": "SQLite OHLCV 存储，支持 bootstrap/incremental/auto 模式和断点续传",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_ingestion.py::test_market_store -v",
+      "priority": 2
+    },
+    {
+      "id": "F-004",
+      "area": "knowledge",
+      "title": "KnowledgeBrain 知识图谱",
+      "description": "300+ 节点图数据库，O(1) 查找，按类别过滤，决策链查询",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_knowledge.py -v",
+      "priority": 1
+    },
+    {
+      "id": "F-005",
+      "area": "analyst",
+      "title": "Claude CLI 包装器",
+      "description": "subprocess 调用 Claude CLI，JSON 提取，Schema 验证，失败重试",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_analyst.py::test_claude_cli -v",
+      "priority": 1
+    },
+    {
+      "id": "F-006",
+      "area": "analyst",
+      "title": "PromptBuilder 按需知识加载",
+      "description": "根据报告类型和步骤，从知识图谱按类别过滤上下文，控制 token 预算",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_analyst.py::test_prompt_builder -v",
+      "priority": 1
+    },
+    {
+      "id": "F-007",
+      "area": "analyst",
+      "title": "5 步分析工作流 + 门控",
+      "description": "Weekly Narrative → Daily Bias → Session → LTF Execution → Signal，FAIL/NO_TRADE 终止",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_analyst.py::test_workflow -v",
+      "priority": 1
+    },
+    {
+      "id": "F-008",
+      "area": "guardian",
+      "title": "一致性检查",
+      "description": "跨步骤 bias/DOL/信号方向对齐检查",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_guardian.py::test_consistency -v",
+      "priority": 1
+    },
+    {
+      "id": "F-009",
+      "area": "guardian",
+      "title": "幻觉检测",
+      "description": "PDH/PDL/PWH/PWL 与 OHLCV 比对，PDA/入场模型名称存在性验证",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_guardian.py::test_hallucination -v",
+      "priority": 1
+    },
+    {
+      "id": "F-010",
+      "area": "guardian",
+      "title": "规则引擎（40+ 规则 + 9 红旗）",
+      "description": "编码原版硬性规则和红旗禁止交易条件，代码级检查",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_guardian.py::test_rules -v",
+      "priority": 2
+    },
+    {
+      "id": "F-011",
+      "area": "dispatch",
+      "title": "飞书 5 色交互卡片",
+      "description": "模板驱动的飞书卡片，5 色方案（绿/红/蓝/橙/紫），文本回退",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_dispatch.py -v",
+      "priority": 2
+    },
+    {
+      "id": "F-012",
+      "area": "dispatch",
+      "title": "本地 Markdown 报告",
+      "description": "每次分析生成本地 Markdown 文件存档",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_dispatch.py::test_markdown -v",
+      "priority": 3
+    },
+    {
+      "id": "F-013",
+      "area": "dispatch",
+      "title": "SQLite 持久化",
+      "description": "分析结果写入 SQLite，支持 system_version 标记",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_store.py -v",
+      "priority": 2
+    },
+    {
+      "id": "F-014",
+      "area": "audit",
+      "title": "4 维评分系统",
+      "description": "方向(0-3) + 位点(0-3) + 叙事(0-2) + 可操作(0-2)，代码级评分",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_audit.py::test_scorer -v",
+      "priority": 3
+    },
+    {
+      "id": "F-015",
+      "area": "audit",
+      "title": "反馈闭环",
+      "description": "审计教训持久化，自动注入下次分析的 prompt",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_audit.py::test_feedback -v",
+      "priority": 3
+    },
+    {
+      "id": "F-016",
+      "area": "infra",
+      "title": "配置系统（环境变量驱动）",
+      "description": "Config 数据类，所有路径通过环境变量或自动检测",
+      "status": "not_started",
+      "verification": "python3 -m pytest tests/test_config.py -v",
+      "priority": 1
+    }
+  ]
+}
