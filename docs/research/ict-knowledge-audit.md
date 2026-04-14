@@ -31,33 +31,9 @@
 
 ## 二、ICT 概念模块化框架（修订版）
 
-基于全量精读，将原来讨论的 4 层 12 模块修订为 **5 层 16 模块**：
+基于全量精读和 Patrick 的设计输入，确定为 **5 层分析框架 + Execution 开关**：
 
-### Layer 0: TIME（时间框架）— 一切分析的前提
-
-| 模块 | 内容 | 来源 |
-|------|------|------|
-| **时间结构** | Killzones (5个)、Macros (5个窗口)、Silver Bullet 窗口、1st Hour Dealing Range、Octane Levels | 2023 GEMS, 2026 Notes, LumiTraders |
-| **AMD 周期** | Accumulation → Manipulation → Distribution，年/月/周/日/Session 各级分形 | Goldbach, MMXM Handbook |
-
-**Killzones（全部 ET）：**
-- Asia: 8:00 PM - 12:00 AM
-- London Open: 2:00 AM - 5:00 AM
-- NY Open: 7:00 AM - 10:00 AM (索引) / 8:30 AM - 11:00 AM (期货)
-- London Close: 10:00 AM - 12:00 PM
-- CBDR: 2:00 PM - 8:00 PM
-
-**Macros（全部 ET）：**
-- 9:50 - 10:10 AM（最高概率）
-- 10:50 - 11:10 AM
-- 11:50 - 12:10 PM（避免交易）
-- 1:30 PM Judas
-- 3:15 - 3:45 PM
-
-**Silver Bullet 窗口：**
-- London: 3:00 - 4:00 AM
-- NY AM: 10:00 - 11:00 AM
-- NY PM: 2:00 - 3:00 PM
+> **设计原则：** Time 不单独成层，而是 Planning 层 A+ Checklist 的一个评分项。Execution 默认关闭，当前只做分析和计划。
 
 ### Layer 1: FRAMING（定框架）
 
@@ -83,14 +59,32 @@
 | **DOL 框架** | PDA + Bias + 流动性池 | 目标价位 + 路径 | Q1 从哪来 / Q2 现在在哪 / Q3 要去哪, ERL↔IRL |
 | **Key Levels** | DOL + PDA + 计算 | 具体价格位 | PDH/PDL/PWH/PWL/NMO/NWOG/NDOG/ORG/CBDR/EQH/EQL, Equilibrium, 1st Hour DR |
 
-### Layer 4: EXECUTING（做执行）
+### Layer 4: PLANNING（做计划）
 
 | 模块 | 输入 | 输出 | 关键方法 |
 |------|------|------|----------|
 | **Market State** | LTF 数据 + Session 进展 + MMXM | 微观状态分类 | trending/ranging/sweep/impulse/retracement + MMXM 阶段 |
-| **Entry Model 匹配** | Market State + PDA + DOL + Bias + Time | Top-3 模型 + 触发条件 | 条件表匹配（见下方完整模型清单） |
-| **A+ Checklist** | 以上全部 | 8 项评分 + GO/NO-GO | HTF叙事/DOL信念/时间窗口/流动性扫荡/MSS+位移/PDA识别/正确区域/R:R≥2 |
+| **Entry Model 匹配** | Market State + PDA + DOL + Bias | Top-3 模型 + 触发条件 | 条件表匹配（见下方完整模型清单） |
+| **Trade Plan** | Entry Model + Key Levels + 风控规则 | Entry/SL/TP/R:R/Position Size | 具体价格计算 + NQ 最大 30 点 SL + 2% 最大风险 |
+| **A+ Checklist** | 以上全部 | 8 项评分 + GO/NO-GO | HTF叙事/DOL信念/**时间窗口**/流动性扫荡/MSS+位移/PDA识别/正确区域/R:R≥2 |
 | **红旗总检** | 以上全部 | TRADE / NO_TRADE | 9条红旗 + 11条Seek&Destroy条件 + 3PDA失败规则 |
+
+### Layer 5: EXECUTION（做执行）—— 默认关闭
+
+| 模块 | 说明 |
+|------|------|
+| **模拟交易** | `config.execution_enabled = false`，未来阶段启用 |
+
+> **Time 不是独立层。** 时间窗口（KZ/Macro/Silver Bullet）作为 A+ Checklist 的第 3 项参与评分，不单独做前置过滤。分析（Layer 1-3）不需要管当前时间。
+
+**时间参考数据（供 A+ Checklist 和 Skill 引用）：**
+
+| 类别 | 具体时间（ET） |
+|------|--------------|
+| Killzones | Asia 8PM-12AM, London 2-5AM, NY 8:30-11AM, London Close 10AM-12PM, CBDR 2-8PM |
+| Macros | 9:50-10:10, 10:50-11:10, 11:50-12:10(避免), 1:30PM Judas, 3:15-3:45 |
+| Silver Bullet | London 3-4AM, NY AM 10-11AM, NY PM 2-3PM |
+| AMD 周期 | Accumulation→Manipulation→Distribution，各级分形 |
 
 ---
 

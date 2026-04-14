@@ -27,11 +27,57 @@
 - 知识图谱、数据处理、subprocess 调用都在 Python 舒适区
 - Patrick 已有重构版的 Python 经验
 
-### 决策 2：四层架构（简化重构版的五层为四层）
+### 决策 2：五层分析框架 + Execution 开关
 
-重构版五层的问题：Audit 层与 Guardian 层职责重叠（都是验证），且 Audit 是异步后置的，与实时流水线混在一起增加复杂度。
+基于 ICT 方法论的决策链和 Patrick 的设计输入，Michael 采用 **5 层分析框架**，外加可选的 Execution 层：
 
-**Michael 四层：**
+**分析框架（5 层）：**
+
+```
+Layer 1: FRAMING（定框架）
+│  Context → Narrative → Bias
+│  输入：IPDA 20/40/60D, HTF 订单流, PO3, DXY/SMT
+│  输出：方向（LONG/SHORT/NEUTRAL）+ 置信度
+│  门控：Bias=NEUTRAL 且低置信 → 停止
+│
+Layer 2: PROFILING（画轮廓）
+│  Weekly Profile → Daily Profile → Session Role
+│  输入：Bias + 周初/日内行为 + London 表现
+│  输出：周型 + 日型 + 当前 Session 角色
+│  门控：Seek & Destroy 周型 → CAUTION
+│
+Layer 3: TARGETING（找目标）
+│  PDA Scan → DOL Framework → Key Levels
+│  输入：HTF 结构 + 知识库
+│  输出：PDA 优先列表 + DOL 目标 + 关键价位
+│  门控：无明确 DOL → 停止
+│
+Layer 4: PLANNING（做计划）
+│  Market State → Entry Model 匹配 →
+│  Plan Entry/SL/TP/R:R/Position Size →
+│  A+ Checklist（8项，含时间窗口）→ Red Flags
+│  输入：Layer 1-3 全部输出 + LTF 数据
+│  输出：完整 Trade Plan（JSON 结构）
+│  门控：A+ < 7 或 R:R < 2 或红旗 → NO_TRADE
+│
+Layer 5: EXECUTION（做执行）—— 默认关闭
+   模拟交易（config.execution_enabled = false）
+   未来阶段启用
+```
+
+**设计依据：**
+
+1. **来自 ICT 方法论本身的决策链**：精读 24 份资料后发现，所有 ICT 教学者都遵循 Bias → Profile → DOL → Plan → Execute 的顺序。这不是人为分层，是方法论的天然结构。
+
+2. **来自 8 步通用执行序列的验证**：所有 ICT 入场模型共享同一个序列（HTF Bias → DOL → 流动性扫荡 → 位移确认 → PDA 入场 → 目标流动性 → 风控），自然映射到 5 层。
+
+3. **来自 Harness 门控需求**：每一层都能独立产生"停止"信号，实现 Harness 第四原则（范围控制）。
+
+4. **Time 是 A+ Checklist 的一个评分项**，不单独成层。分析阶段（Layer 1-3）不需要管时间；时间只在 Planning 层作为入场条件之一参与 A+ 评分。
+
+5. **Planning 是 Phase A 的终点**。Michael 当前只做分析和计划，不做交易。Execution 默认关闭，未来启用模拟交易。
+
+**系统架构（围绕分析框架的支撑层）：**
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -40,24 +86,24 @@
 └──────────────┬───────────────────────────────────┘
                │
 ┌──────────────▼───────────────────────────────────┐
-│              Layer 1: Ingestion                   │
+│              Ingestion                            │
 │    直接 MCP 采集 → DataManifest → MarketStore     │
 └──────────────┬───────────────────────────────────┘
                │
 ┌──────────────▼───────────────────────────────────┐
-│              Layer 2: Analyst                     │
-│    PromptBuilder → Claude CLI → StepResult        │
-│    (5 步工作流 + 门控 + JSON Schema 验证)          │
+│         Analysis Engine (Layer 1-4)               │
+│    Framing → Profiling → Targeting → Planning     │
+│    (Skill 模块驱动 + 自适应调用 + 门控)            │
 └──────────────┬───────────────────────────────────┘
                │
 ┌──────────────▼───────────────────────────────────┐
-│              Layer 3: Guardian                    │
+│              Guardian                             │
 │    一致性 + 幻觉检测 + 规则合规 + 红旗检查         │
 │    (PASS/WARN/FAIL → 阻断或放行)                  │
 └──────────────┬───────────────────────────────────┘
                │
 ┌──────────────▼───────────────────────────────────┐
-│              Layer 4: Dispatch                    │
+│              Dispatch                             │
 │    飞书卡片 + 本地 Markdown + SQLite 持久化        │
 └──────────────────────────────────────────────────┘
 
@@ -68,10 +114,20 @@
           └─────────────────────┘
 ```
 
-**关键改变：** Audit 从流水线中独立出来，作为异步后处理。理由：
+**报告类型与分析深度：**
+
+| 报告类型 | 走到哪一层 | 说明 |
+|----------|-----------|------|
+| weekly_prep | Layer 1-3 | Framing + Profiling + Targeting |
+| daily_bias | Layer 1-3 | 同上 |
+| asia_pre / london_pre / nypm_pre | Layer 1-3 + Planning 的 Session Plan 部分 | 含 Session 计划但不含 Trade Plan |
+| nyam_pre / nyam_open | Layer 1-4 完整 | 含完整 Trade Plan |
+| daily_review / weekly_review | Audit 流程 | 独立异步运行 |
+
+**Audit 独立于流水线。** 理由：
 - Audit 需要"实际市场结果"，在分析时不可用
 - Audit 的反馈是给下一次分析用的，不影响当前流水线
-- 分离后流水线更简洁，四层各司其职
+- 分离后流水线更简洁
 
 ### 决策 3：知识系统 — 双轨制
 
