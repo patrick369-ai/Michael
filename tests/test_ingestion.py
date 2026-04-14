@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
@@ -67,27 +67,26 @@ class TestManifestEvaluation:
 
 
 class TestCollectorRPC:
-    def test_rpc_missing_server_raises(self, tmp_path):
+    def test_connect_missing_server_raises(self, tmp_path):
         config = Config(mcp_server_dir=tmp_path / "nonexistent")
         collector = Collector(config)
         with pytest.raises(CollectorError):
-            collector._start_server()
+            collector.connect()
 
     def test_collect_ohlcv_parse_bars(self):
-        """验证 bars 解析逻辑"""
+        """验证 bars 解析逻辑（mock 返回 JSON 字符串）"""
         config = Config()
         collector = Collector(config)
 
-        # Mock _call_tool 返回模拟数据
-        mock_data = {
+        mock_json = json.dumps({
             "bars": [
                 {"time": "2026-04-14T09:00", "open": 21500, "high": 21520,
                  "low": 21490, "close": 21515, "volume": 1000},
                 {"time": "2026-04-14T10:00", "open": 21515, "high": 21540,
                  "low": 21510, "close": 21530, "volume": 1200},
             ]
-        }
-        collector._call_tool = MagicMock(return_value=mock_data)
+        })
+        collector._call_tool = MagicMock(return_value=mock_json)
 
         bars = collector.collect_ohlcv("NQ1!", "H1", 2)
         assert len(bars) == 2
@@ -107,8 +106,8 @@ class TestCollectorRPC:
         config = Config()
         collector = Collector(config)
 
-        # 缺少 bars 字段 — 应返回空列表而不是抛出异常
-        collector._call_tool = MagicMock(return_value={"error": "no data"})
+        # 返回非 JSON 字符串 — 应返回空列表
+        collector._call_tool = MagicMock(return_value="not json text")
         bars = collector.collect_ohlcv("NQ1!", "H1", 10)
         assert bars == []
 
